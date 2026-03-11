@@ -1,0 +1,191 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bedspace Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Bedspace Manager</div>
+    <nav class="nav">
+      <button class="nav-btn" data-target="dashboard">Dashboard</button>
+      <button class="nav-btn" data-target="tenants">Tenants</button>
+      <button class="nav-btn" data-target="beds">Beds</button>
+      <button class="nav-btn" data-target="rent">Rent Tracker</button>
+      <button class="nav-btn" data-target="utilities">Utilities</button>
+      <button class="nav-btn" data-target="cashflow">Cashflow</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="dashboard" class="panel active">
+      <div class="section-head">
+        <h2>Dashboard</h2>
+        <div id="upcoming" class="pill muted">Upcoming dues: 0</div>
+      </div>
+      <div class="cards">
+        <div class="card"><p>Total Beds</p><h3 id="totalBeds">16</h3></div>
+        <div class="card"><p>Occupied</p><h3 id="occupiedBeds">0</h3></div>
+        <div class="card"><p>Vacant</p><h3 id="vacantBeds">16</h3></div>
+        <div class="card warn"><p>Unpaid Tenants</p><h3 id="unpaidCount">0</h3></div>
+        <div class="card success"><p>Rent Collected (mo)</p><h3 id="rentCollected">₱0</h3></div>
+        <div class="card"><p>Utility Expenses (mo)</p><h3 id="utilityTotal">₱0</h3></div>
+        <div class="card highlight"><p>Net Profit (mo)</p><h3 id="netProfit">₱0</h3></div>
+      </div>
+      <div class="list-card">
+        <div class="list-head">
+          <h3>Upcoming rent due (within 5 days)</h3>
+          <small>Assumes rent due on the 1st of each month.</small>
+        </div>
+        <ul id="upcomingList" class="chip-list"></ul>
+      </div>
+    </section>
+
+    <section id="tenants" class="panel">
+      <div class="section-head">
+        <h2>Tenants</h2>
+        <button id="addTenantBtn" class="primary">Add Tenant</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Bed</th>
+              <th>Unit</th>
+              <th>Move-in</th>
+              <th>Rent (₱)</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tenantTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="beds" class="panel">
+      <div class="section-head">
+        <h2>Bed Management</h2>
+      </div>
+      <div class="grid" id="bedGrid"></div>
+    </section>
+
+    <section id="rent" class="panel">
+      <div class="section-head">
+        <h2>Rent Tracker</h2>
+        <div class="inline">
+          <label for="rentMonth">Month</label>
+          <input type="month" id="rentMonth">
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Tenant</th>
+              <th>Month</th>
+              <th>Amount (₱)</th>
+              <th>Status</th>
+              <th>Payment Date</th>
+              <th>Balance</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="rentTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="utilities" class="panel">
+      <div class="section-head">
+        <h2>Utilities</h2>
+      </div>
+      <form id="utilityForm" class="card form-card">
+        <div class="form-grid">
+          <label>Billing Month<input type="month" name="month" required></label>
+          <label>Electricity (₱)<input type="number" name="electricity" min="0" step="0.01" required></label>
+          <label>Water (₱)<input type="number" name="water" min="0" step="0.01" required></label>
+        </div>
+        <button type="button" id="calcShare" class="secondary">Calculate Split</button>
+        <div id="shareContainer"></div>
+        <div class="actions">
+          <button type="submit" class="primary">Save Utility Bill</button>
+        </div>
+      </form>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th>Electricity</th>
+              <th>Water</th>
+              <th>Total</th>
+              <th>Per Tenant Avg</th>
+            </tr>
+          </thead>
+          <tbody id="utilityTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="cashflow" class="panel">
+      <div class="section-head">
+        <h2>Cashflow</h2>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              <th>Income</th>
+              <th>Expense</th>
+            </tr>
+          </thead>
+          <tbody id="cashflowTable"></tbody>
+          <tfoot>
+            <tr>
+              <th colspan="2">Totals</th>
+              <th id="cashIncome">₱0</th>
+              <th id="cashExpense">₱0</th>
+            </tr>
+            <tr>
+              <th colspan="2">Net</th>
+              <th colspan="2" id="cashNet">₱0</th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-head">
+        <h3 id="modalTitle">Add Tenant</h3>
+        <button id="closeModal">✕</button>
+      </div>
+      <form id="tenantForm" class="form-grid">
+        <input type="hidden" name="id">
+        <label>Name<input name="name" required></label>
+        <label>Unit<select name="unit" required></select></label>
+        <label>Bed<select name="bed" required></select></label>
+        <label>Move-in<input type="date" name="moveIn" required></label>
+        <label>Monthly Rent (₱)<input type="number" name="rent" value="3000" min="0" step="0.01" required></label>
+        <label>Status<select name="status"><option value="active">Active</option><option value="moved-out">Moved out</option></select></label>
+        <div class="actions">
+          <button type="submit" class="primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

@@ -39,6 +39,7 @@ function init() {
   setupForms();
   els.rentMonth.value = monthKey(new Date());
   renderAll();
+  setupDataManagement();
 }
 
 function cacheElements() {
@@ -60,11 +61,11 @@ function cacheElements() {
   els.addTenantBtn = document.getElementById('addTenantBtn');
   els.tenantForm = document.getElementById('tenantForm');
   els.dashboard = {
-    totalBeds: document.getElementById('totalBeds'),
+    totalRent: document.getElementById('totalRent'),
     occupied: document.getElementById('occupiedBeds'),
     vacant: document.getElementById('vacantBeds'),
-    unpaid: document.getElementById('unpaidCount'),
     rentCollected: document.getElementById('rentCollected'),
+    rentPending: document.getElementById('rentPending'),
     utilityTotal: document.getElementById('utilityTotal'),
     netProfit: document.getElementById('netProfit'),
     upcomingPill: document.getElementById('upcoming'),
@@ -73,6 +74,8 @@ function cacheElements() {
   els.calcShare = document.getElementById('calcShare');
   els.shareContainer = document.getElementById('shareContainer');
   els.upcomingList = document.getElementById('upcomingList');
+  els.backupBtn = document.getElementById('backupBtn');
+  els.importInput = document.getElementById('importInput');
 }
 
 function setupNav() {
@@ -118,10 +121,20 @@ function setupForms() {
     ensureRentRecordsForMonth(els.rentMonth.value);
     renderRent();
     renderDashboard();
+    renderTenants();
   });
 
   els.calcShare.addEventListener('click', buildShareInputs);
   els.utilityForm.addEventListener('submit', handleUtilitySubmit);
+}
+
+function setupDataManagement() {
+  if (els.backupBtn) {
+    els.backupBtn.addEventListener('click', backupData);
+  }
+  if (els.importInput) {
+    els.importInput.addEventListener('change', handleImportFile);
+  }
 }
 
 function renderAll() {
@@ -178,14 +191,17 @@ function populateBedSelect(selectedBed, tenantId) {
 
 function renderTenants() {
   els.tenantTable.innerHTML = '';
+  const currentMonth = els.rentMonth.value || monthKey(new Date());
   state.tenants.forEach(t => {
     const tr = document.createElement('tr');
+    const rentStatus = getTenantRentStatus(t.id, currentMonth);
     tr.innerHTML = `
       <td>${t.name}</td>
       <td>${t.bed}</td>
       <td>${t.unit}</td>
       <td>${t.moveIn || ''}</td>
       <td>${formatCurrency(t.rent)}</td>
+      <td><span class="badge ${rentStatus.className}">${rentStatus.label}</span></td>
       <td><span class="status-pill status-${t.status}">${t.status === 'active' ? 'Active' : 'Moved out'}</span></td>
       <td class="actions">
         <button class="secondary" data-edit="${t.id}">Edit</button>
@@ -220,7 +236,7 @@ function renderBeds() {
     card.innerHTML = `
       <div class="tag ${occupant ? 'occupied' : 'vacant'}">${occupant ? 'Occupied' : 'Vacant'}</div>
       <strong>${b}</strong>
-      <small>Unit ${b.split("-")[0]}</small>
+      <small>Unit ${b.split('-')[0]}</small>
       <small>${occupant ? occupant.name : '—'}</small>
     `;
     els.bedGrid.appendChild(card);
@@ -252,13 +268,14 @@ function renderRent() {
   els.rentTable.innerHTML = '';
   records.forEach(r => {
     const tenant = state.tenants.find(t => t.id === r.tenantId);
+    const statusClass = r.paid ? 'paid' : isOverdueRecord(r) ? 'unpaid' : 'pending';
+    const statusLabel = r.paid ? 'Paid' : isOverdueRecord(r) ? 'Overdue' : 'Pending';
     const tr = document.createElement('tr');
-    const statusClass = r.paid ? 'paid' : 'unpaid';
     tr.innerHTML = `
       <td>${tenant?.name || '—'}</td>
       <td>${r.month}</td>
       <td>${formatCurrency(r.amount)}</td>
-      <td><span class="badge ${statusClass}">${r.paid ? 'Paid' : 'Unpaid'}</span></td>
+      <td><span class="badge ${statusClass}">${statusLabel}</span></td>
       <td>${r.paymentDate || '—'}</td>
       <td class="${r.paid ? '' : 'unpaid'}">${r.paid ? '₱0' : formatCurrency(r.balance)}</td>
       <td>${r.paid ? '' : `<button class="primary" data-pay="${r.id}">Mark Paid</button>`}</td>
@@ -269,6 +286,13 @@ function renderRent() {
   els.rentTable.querySelectorAll('[data-pay]').forEach(btn => {
     btn.addEventListener('click', () => markRentPaid(btn.dataset.pay));
   });
+}
+
+function isOverdueRecord(record) {
+  if (record.paid) return false;
+  const due = dueDateForMonth(record.month);
+  const today = new Date();
+  return today > due;
 }
 
 function markRentPaid(id) {
@@ -289,6 +313,7 @@ function markRentPaid(id) {
   renderRent();
   renderCashflow();
   renderDashboard();
+  renderTenants();
 }
 
 function buildShareInputs() {
@@ -319,7 +344,6 @@ function handleUtilitySubmit(e) {
     tenantId: t.id,
     amount: Number(form.get(`share-${t.id}`)) || 0
   }));
-  const avg = shares.length ? shares.reduce((s,c)=>s+c.amount,0)/shares.length : 0;
 
   state.utilities.push({ id: uuid(), month, electricity, water, total, shares });
   state.cashflow.push({ id: uuid(), date: new Date().toISOString().slice(0,10), description: `Utilities ${month}`, income: 0, expense: total });
@@ -372,20 +396,26 @@ function renderDashboard() {
   const vacant = beds.length - occupied;
   const currentMonth = els.rentMonth.value || monthKey(new Date());
   const rentCurrent = state.rentRecords.filter(r => r.month === currentMonth);
-  const unpaid = rentCurrent.filter(r => !r.paid);
   const rentCollected = rentCurrent.filter(r => r.paid).reduce((s,c)=>s+c.amount,0);
+  const totalRent = activeTenants.reduce((s,c)=>s+(Number(c.rent)||0),0);
+  const pendingRent = Math.max(totalRent - rentCollected, 0);
   const utilityCurrent = state.utilities.filter(u => u.month === currentMonth).reduce((s,c)=>s+c.total,0);
   const net = rentCollected - utilityCurrent;
 
-  els.dashboard.totalBeds.textContent = beds.length;
+  els.dashboard.totalRent.textContent = formatCurrency(totalRent);
   els.dashboard.occupied.textContent = occupied;
   els.dashboard.vacant.textContent = vacant;
-  els.dashboard.unpaid.textContent = unpaid.length;
   els.dashboard.rentCollected.textContent = formatCurrency(rentCollected);
+  els.dashboard.rentPending.textContent = formatCurrency(pendingRent);
   els.dashboard.utilityTotal.textContent = formatCurrency(utilityCurrent);
   els.dashboard.netProfit.textContent = formatCurrency(net);
 
   renderUpcomingDue();
+}
+
+function dueDateForMonth(monthStr) {
+  const [year, month] = monthStr.split('-').map(Number);
+  return new Date(year, month - 1, 1);
 }
 
 function nextDueDate(baseDate=new Date()) {
@@ -416,6 +446,47 @@ function renderUpcomingDue() {
     li.textContent = `${tenant?.name || '—'} - due ${dueDate.toISOString().slice(0,10)}`;
     els.upcomingList.appendChild(li);
   });
+}
+
+function getTenantRentStatus(tenantId, month) {
+  const record = state.rentRecords.find(r => r.tenantId === tenantId && r.month === month);
+  if (record?.paid) return { label: 'Paid', className: 'paid' };
+  const due = dueDateForMonth(month);
+  const today = new Date();
+  if (today > due) return { label: 'Overdue', className: 'unpaid' };
+  return { label: 'Pending', className: 'pending' };
+}
+
+function backupData() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'rent-tracker-backup.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function handleImportFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (!confirm('Importing will overwrite existing data. Continue?')) { e.target.value=''; return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      ['tenants','rentRecords','utilities','cashflow'].forEach(k => {
+        state[k] = data[k] || [];
+      });
+      saveState();
+      location.reload();
+    } catch (err) {
+      alert('Import failed: invalid JSON');
+    }
+  };
+  reader.readAsText(file);
 }
 
 window.addEventListener('DOMContentLoaded', init);

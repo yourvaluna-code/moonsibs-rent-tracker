@@ -5,12 +5,14 @@
 
 const state = {
   tenants: [],
-  rentRecords: [],
+  rentRecords: [], // kept for backward compatibility
   utilities: [],
   cashflow: []
 };
 
 const els = {};
+const GRACE_DAYS = 3;
+const DEFAULT_RENT = 3000;
 
 function loadState() {
   const raw = localStorage.getItem('bedspaceData');
@@ -19,7 +21,23 @@ function loadState() {
     ['tenants','rentRecords','utilities','cashflow'].forEach(k => {
       state[k] = data[k] || [];
     });
+    migrateTenants();
   }
+}
+
+function migrateTenants() {
+  state.tenants = state.tenants.map(t => {
+    const clone = {...t};
+    clone.rentAmount = Number(clone.rentAmount || clone.rent || DEFAULT_RENT);
+    clone.moveIn = clone.moveIn || clone.moveInDate || new Date().toISOString().slice(0,10);
+    clone.moveInDate = clone.moveIn; // keep alias
+    clone.paymentHistory = clone.paymentHistory || [];
+    if (!clone.paidUntil) {
+      clone.paidUntil = firstCycleEnd(clone.moveIn);
+    }
+    if (!clone.lastPaymentDate) clone.lastPaymentDate = null;
+    return clone;
+  });
 }
 
 function saveState() {
@@ -31,6 +49,25 @@ function uuid() { return crypto.randomUUID ? crypto.randomUUID() : Math.random()
 function monthKey(date) { return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`; }
 
 function formatCurrency(n=0) { return `₱${Number(n).toLocaleString('en-PH', {maximumFractionDigits:2})}`; }
+function formatDate(d) { return d ? new Date(d).toISOString().slice(0,10) : '—'; }
+
+function addMonths(dateStr, months) {
+  const d = new Date(dateStr);
+  d.setMonth(d.getMonth() + months);
+  return d;
+}
+
+function cycleEnd(startDateStr) {
+  // end is start + 1 month - 1 day
+  const start = new Date(startDateStr);
+  const end = addMonths(startDateStr, 1);
+  end.setDate(end.getDate() - 1);
+  return end;
+}
+
+function firstCycleEnd(moveIn) {
+  return formatDate(cycleEnd(moveIn));
+}
 
 function init() {
   cacheElements();
@@ -69,7 +106,8 @@ function cacheElements() {
     utilityTotal: document.getElementById('utilityTotal'),
     netProfit: document.getElementById('netProfit'),
     upcomingPill: document.getElementById('upcoming'),
-    upcomingList: document.getElementById('upcomingList')
+    upcomingList: document.getElementById('upcomingList'),
+    overdueCount: document.getElementById('overdueTenants')
   };
   els.calcShare = document.getElementById('calcShare');
   els.shareContainer = document.getElementById('shareContainer');
@@ -102,23 +140,25 @@ function setupForms() {
       unit: form.get('unit'),
       bed: form.get('bed'),
       moveIn: form.get('moveIn'),
-      rent: Number(form.get('rent')) || 3000,
-      status: form.get('status')
+      moveInDate: form.get('moveIn'),
+      rentAmount: Number(form.get('rent')) || DEFAULT_RENT,
+      status: form.get('status'),
     };
     const existing = state.tenants.find(t => t.id === id);
     if (existing) {
       Object.assign(existing, payload);
     } else {
+      payload.paidUntil = firstCycleEnd(payload.moveIn);
+      payload.lastPaymentDate = null;
+      payload.paymentHistory = [];
       state.tenants.push(payload);
     }
     saveState();
     closeModal();
-    ensureRentRecordsForMonth(els.rentMonth.value || monthKey(new Date()));
     renderAll();
   });
 
   els.rentMonth.addEventListener('change', () => {
-    ensureRentRecordsForMonth(els.rentMonth.value);
     renderRent();
     renderDashboard();
     renderTenants();
@@ -140,7 +180,6 @@ function setupDataManagement() {
 function renderAll() {
   renderTenants();
   renderBeds();
-  ensureRentRecordsForMonth(els.rentMonth.value || monthKey(new Date()));
   renderRent();
   renderUtilities();
   renderCashflow();
@@ -154,7 +193,7 @@ function openTenantModal(tenant) {
   els.tenantForm.querySelector('[name=id]').value = tenant?.id || '';
   els.tenantForm.querySelector('[name=name]').value = tenant?.name || '';
   els.tenantForm.querySelector('[name=moveIn]').value = tenant?.moveIn || '';
-  els.tenantForm.querySelector('[name=rent]').value = tenant?.rent || 3000;
+  els.tenantForm.querySelector('[name=rent]').value = tenant?.rentAmount || DEFAULT_RENT;
   els.tenantForm.querySelector('[name=status]').value = tenant?.status || 'active';
   populateUnitSelect(tenant?.unit);
   populateBedSelect(tenant?.bed, tenant?.id);
@@ -189,19 +228,36 @@ function populateBedSelect(selectedBed, tenantId) {
   });
 }
 
+function tenantStatus(tenant) {
+  const today = new Date();
+  const paidUntil = new Date(tenant.paidUntil);
+  if (today <= paidUntil) return { label: 'Paid', className: 'paid' };
+  const grace = new Date(paidUntil);
+  grace.setDate(grace.getDate() + GRACE_DAYS);
+  if (today <= grace) return { label: 'Due', className: 'pending' };
+  return { label: 'Overdue', className: 'unpaid' };
+}
+
+function nextDueDate(tenant) {
+  const next = new Date(tenant.paidUntil);
+  next.setDate(next.getDate() + 1);
+  return formatDate(next);
+}
+
 function renderTenants() {
   els.tenantTable.innerHTML = '';
-  const currentMonth = els.rentMonth.value || monthKey(new Date());
   state.tenants.forEach(t => {
+    const status = tenantStatus(t);
     const tr = document.createElement('tr');
-    const rentStatus = getTenantRentStatus(t.id, currentMonth);
     tr.innerHTML = `
       <td>${t.name}</td>
       <td>${t.bed}</td>
       <td>${t.unit}</td>
-      <td>${t.moveIn || ''}</td>
-      <td>${formatCurrency(t.rent)}</td>
-      <td><span class="badge ${rentStatus.className}">${rentStatus.label}</span></td>
+      <td>${formatDate(t.moveIn)}</td>
+      <td>${formatCurrency(t.rentAmount)}</td>
+      <td>${formatDate(t.paidUntil)}</td>
+      <td>${nextDueDate(t)}</td>
+      <td><span class="badge ${status.className}">${status.label}</span></td>
       <td><span class="status-pill status-${t.status}">${t.status === 'active' ? 'Active' : 'Moved out'}</span></td>
       <td class="actions">
         <button class="secondary" data-edit="${t.id}">Edit</button>
@@ -220,7 +276,6 @@ function renderTenants() {
     btn.addEventListener('click', () => {
       const id = btn.dataset.remove;
       state.tenants = state.tenants.filter(t => t.id !== id);
-      state.rentRecords = state.rentRecords.filter(r => r.tenantId !== id);
       saveState();
       renderAll();
     });
@@ -243,42 +298,20 @@ function renderBeds() {
   });
 }
 
-function ensureRentRecordsForMonth(month) {
-  const targetMonth = month || monthKey(new Date());
-  state.tenants.filter(t => t.status === 'active').forEach(t => {
-    const exists = state.rentRecords.some(r => r.tenantId === t.id && r.month === targetMonth);
-    if (!exists) {
-      state.rentRecords.push({
-        id: uuid(),
-        tenantId: t.id,
-        month: targetMonth,
-        amount: t.rent,
-        paid: false,
-        paymentDate: null,
-        balance: t.rent
-      });
-    }
-  });
-  saveState();
-}
-
 function renderRent() {
-  const m = els.rentMonth.value || monthKey(new Date());
-  const records = state.rentRecords.filter(r => r.month === m);
   els.rentTable.innerHTML = '';
-  records.forEach(r => {
-    const tenant = state.tenants.find(t => t.id === r.tenantId);
-    const statusClass = r.paid ? 'paid' : isOverdueRecord(r) ? 'unpaid' : 'pending';
-    const statusLabel = r.paid ? 'Paid' : isOverdueRecord(r) ? 'Overdue' : 'Pending';
+  state.tenants.forEach(t => {
+    const status = tenantStatus(t);
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${tenant?.name || '—'}</td>
-      <td>${r.month}</td>
-      <td>${formatCurrency(r.amount)}</td>
-      <td><span class="badge ${statusClass}">${statusLabel}</span></td>
-      <td>${r.paymentDate || '—'}</td>
-      <td class="${r.paid ? '' : 'unpaid'}">${r.paid ? '₱0' : formatCurrency(r.balance)}</td>
-      <td>${r.paid ? '' : `<button class="primary" data-pay="${r.id}">Mark Paid</button>`}</td>
+      <td>${t.name}</td>
+      <td>${formatDate(t.moveIn)}</td>
+      <td>${formatDate(t.paidUntil)}</td>
+      <td>${nextDueDate(t)}</td>
+      <td><span class="badge ${status.className}">${status.label}</span></td>
+      <td>${formatCurrency(t.rentAmount)}</td>
+      <td>${t.lastPaymentDate ? formatDate(t.lastPaymentDate) : '—'}</td>
+      <td>${status.label === 'Paid' ? '' : `<button class="primary" data-pay="${t.id}">Mark Paid</button>`}</td>
     `;
     els.rentTable.appendChild(tr);
   });
@@ -288,27 +321,26 @@ function renderRent() {
   });
 }
 
-function isOverdueRecord(record) {
-  if (record.paid) return false;
-  const due = dueDateForMonth(record.month);
-  const today = new Date();
-  return today > due;
-}
+function markRentPaid(tenantId) {
+  const tenant = state.tenants.find(t => t.id === tenantId);
+  if (!tenant) return;
+  const start = tenant.paidUntil ? new Date(tenant.paidUntil) : new Date(tenant.moveIn);
+  const newStart = new Date(start);
+  newStart.setDate(newStart.getDate() + 1);
+  const newEnd = cycleEnd(formatDate(newStart));
+  tenant.paidUntil = formatDate(newEnd);
+  tenant.lastPaymentDate = formatDate(new Date());
+  tenant.paymentHistory = tenant.paymentHistory || [];
+  tenant.paymentHistory.push({ date: tenant.lastPaymentDate, amount: tenant.rentAmount, coversUntil: tenant.paidUntil });
 
-function markRentPaid(id) {
-  const rec = state.rentRecords.find(r => r.id === id);
-  if (!rec) return;
-  rec.paid = true;
-  rec.paymentDate = new Date().toISOString().slice(0,10);
-  rec.balance = 0;
-  const tenant = state.tenants.find(t => t.id === rec.tenantId);
   state.cashflow.push({
     id: uuid(),
-    date: rec.paymentDate,
-    description: `Rent - ${tenant?.name || ''} (${rec.month})`,
-    income: rec.amount,
+    date: tenant.lastPaymentDate,
+    description: `Rent - ${tenant.name}`,
+    income: tenant.rentAmount,
     expense: 0
   });
+
   saveState();
   renderRent();
   renderCashflow();
@@ -394,13 +426,17 @@ function renderDashboard() {
   const activeTenants = state.tenants.filter(t => t.status === 'active');
   const occupied = activeTenants.length;
   const vacant = beds.length - occupied;
-  const currentMonth = els.rentMonth.value || monthKey(new Date());
-  const rentCurrent = state.rentRecords.filter(r => r.month === currentMonth);
-  const rentCollected = rentCurrent.filter(r => r.paid).reduce((s,c)=>s+c.amount,0);
-  const totalRent = activeTenants.reduce((s,c)=>s+(Number(c.rent)||0),0);
-  const pendingRent = Math.max(totalRent - rentCollected, 0);
-  const utilityCurrent = state.utilities.filter(u => u.month === currentMonth).reduce((s,c)=>s+c.total,0);
+  const currentMonth = monthKey(new Date());
+  const rentCollected = state.cashflow
+    .filter(c => c.income && (c.date || '').startsWith(currentMonth))
+    .reduce((s,c)=>s+c.income,0);
+  const totalRent = activeTenants.reduce((s,c)=>s+(Number(c.rentAmount)||0),0);
+  const pendingRent = activeTenants
+    .filter(t => tenantStatus(t).label !== 'Paid')
+    .reduce((s,c)=>s+(Number(c.rentAmount)||0),0);
+  const utilityCurrent = state.utilities.filter(u => (u.month||'').startsWith(currentMonth)).reduce((s,c)=>s+c.total,0);
   const net = rentCollected - utilityCurrent;
+  const overdueCount = activeTenants.filter(t => tenantStatus(t).label === 'Overdue').length;
 
   els.dashboard.totalRent.textContent = formatCurrency(totalRent);
   els.dashboard.occupied.textContent = occupied;
@@ -409,52 +445,28 @@ function renderDashboard() {
   els.dashboard.rentPending.textContent = formatCurrency(pendingRent);
   els.dashboard.utilityTotal.textContent = formatCurrency(utilityCurrent);
   els.dashboard.netProfit.textContent = formatCurrency(net);
+  if (els.dashboard.overdueCount) els.dashboard.overdueCount.textContent = overdueCount;
 
   renderUpcomingDue();
 }
 
-function dueDateForMonth(monthStr) {
-  const [year, month] = monthStr.split('-').map(Number);
-  return new Date(year, month - 1, 1);
-}
-
-function nextDueDate(baseDate=new Date()) {
-  const year = baseDate.getFullYear();
-  const month = baseDate.getMonth();
-  const firstOfMonth = new Date(year, month, 1);
-  const today = baseDate;
-  if (today <= firstOfMonth) return firstOfMonth;
-  return new Date(year, month + 1, 1);
-}
-
 function renderUpcomingDue() {
   const today = new Date();
-  const dueDate = nextDueDate(today);
-  const targetMonth = monthKey(dueDate);
-  ensureRentRecordsForMonth(targetMonth);
-  const list = state.rentRecords.filter(r => r.month === targetMonth && !r.paid);
-  const upcoming = list.filter(r => {
+  const upcoming = state.tenants.filter(t => {
+    const status = tenantStatus(t);
+    if (status.label === 'Paid') return false;
+    const dueDate = new Date(t.paidUntil);
     const diff = (dueDate - today)/(1000*60*60*24);
-    return diff >= 0 && diff <=5;
+    return diff >= 0 && diff <= 5;
   });
   els.dashboard.upcomingPill.textContent = `Upcoming dues: ${upcoming.length}`;
   els.upcomingList.innerHTML = '';
-  upcoming.forEach(r => {
-    const tenant = state.tenants.find(t => t.id === r.tenantId);
+  upcoming.forEach(t => {
     const li = document.createElement('li');
     li.className = 'chip';
-    li.textContent = `${tenant?.name || '—'} - due ${dueDate.toISOString().slice(0,10)}`;
+    li.textContent = `${t.name} - due ${formatDate(nextDueDate(t))}`;
     els.upcomingList.appendChild(li);
   });
-}
-
-function getTenantRentStatus(tenantId, month) {
-  const record = state.rentRecords.find(r => r.tenantId === tenantId && r.month === month);
-  if (record?.paid) return { label: 'Paid', className: 'paid' };
-  const due = dueDateForMonth(month);
-  const today = new Date();
-  if (today > due) return { label: 'Overdue', className: 'unpaid' };
-  return { label: 'Pending', className: 'pending' };
 }
 
 function backupData() {
@@ -480,6 +492,7 @@ function handleImportFile(e) {
       ['tenants','rentRecords','utilities','cashflow'].forEach(k => {
         state[k] = data[k] || [];
       });
+      migrateTenants();
       saveState();
       location.reload();
     } catch (err) {

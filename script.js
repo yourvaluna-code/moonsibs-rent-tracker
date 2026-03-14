@@ -1,487 +1,559 @@
-﻿const beds = [
+﻿const BED_SPACES = [
   '6-A1','6-A2','6-A3','6-A4','6-B1','6-B2','6-B3','6-B4',
   '7-A1','7-A2','7-A3','7-A4','7-B1','7-B2','7-B3','7-B4'
 ];
+const DEFAULT_RENT = 3000;
+const DEFAULT_SETTINGS = {
+  wifiCost: 750,
+  wifiDivisor6: 4,
+  wifiDivisor7: 4,
+  landlordRent6: 10000,
+  landlordRent7: 10000,
+  utilityBase: 1000
+};
 
 const state = {
   tenants: [],
-  rentRecords: [], // kept for backward compatibility
+  payments: [],
+  expenses: [],
   utilities: [],
-  cashflow: []
+  repairs: [],
+  ledger: [],
+  settings: { ...DEFAULT_SETTINGS }
 };
 
 const els = {};
-const GRACE_DAYS = 3;
-const DEFAULT_RENT = 3000;
+let monthFilter = today().slice(0,7);
 
 function loadState() {
   const raw = localStorage.getItem('bedspaceData');
   if (raw) {
     const data = JSON.parse(raw);
-    ['tenants','rentRecords','utilities','cashflow'].forEach(k => {
-      state[k] = data[k] || [];
+    ['tenants','payments','expenses','utilities','repairs','ledger','settings'].forEach(k => {
+      if (data[k]) state[k] = data[k];
     });
-    migrateTenants();
   }
+  migrateSettings();
+  migrateTenants();
+}
+
+function migrateSettings() { state.settings = { ...DEFAULT_SETTINGS, ...(state.settings||{}) }; }
+
+function normalizeBed(b) {
+  if (!b) return '';
+  const cleaned = b.replace(/\s+/g,'').replace(/_/g,'-').toUpperCase();
+  // Accept forms: 6A1, 6A-1, 6-A-1, 6-A1, U6-B1, 6B1
+  const match = cleaned.match(/(?:U)?([67])[-]?([AB])[-]?([1-4])/);
+  if (match) return `${match[1]}-${match[2]}${match[3]}`;
+  return cleaned;
 }
 
 function migrateTenants() {
-  state.tenants = state.tenants.map(t => {
-    const clone = {...t};
+  state.tenants = (state.tenants||[]).map(t => {
+    const clone = { ...t };
+    clone.id = clone.id || uuid();
+    clone.name = clone.name || clone.tenantName || '';
+    clone.bedSpace = normalizeBed(clone.bedSpace || clone.bed || '');
+    clone.unit = clone.unit || (clone.bedSpace.startsWith('7') ? '7' : '6');
+    clone.moveInDate = clone.moveInDate || clone.moveIn || today();
+    clone.moveOutDate = clone.moveOutDate || null;
     clone.rentAmount = Number(clone.rentAmount || clone.rent || DEFAULT_RENT);
-    clone.moveIn = clone.moveIn || clone.moveInDate || new Date().toISOString().slice(0,10);
-    clone.moveInDate = clone.moveIn; // keep alias
+    clone.status = clone.status || 'active';
+    clone.paidUntil = clone.paidUntil ? formatDate(clone.paidUntil) : clone.moveInDate; // last fully covered end-date
+    clone.lastPaymentDate = clone.lastPaymentDate || null;
     clone.paymentHistory = clone.paymentHistory || [];
-    if (!clone.paidUntil) {
-      clone.paidUntil = firstCycleEnd(clone.moveIn);
-    }
-    if (!clone.lastPaymentDate) clone.lastPaymentDate = null;
+    clone.partialBalance = Number(clone.partialBalance || 0); // amount applied to current cycle but not yet complete
     return clone;
   });
 }
 
-function saveState() {
-  localStorage.setItem('bedspaceData', JSON.stringify(state));
+function isActive(tenant) {
+  if (tenant.status !== 'active') return false;
+  if (tenant.moveOutDate && new Date(tenant.moveOutDate) <= new Date()) return false;
+  return true;
 }
+
+function saveState() { localStorage.setItem('bedspaceData', JSON.stringify(state)); }
 
 function uuid() { return crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2); }
-
-function monthKey(date) { return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`; }
-
-function formatCurrency(n=0) { return `₱${Number(n).toLocaleString('en-PH', {maximumFractionDigits:2})}`; }
+function today() { return new Date().toISOString().slice(0,10); }
+function formatCurrency(n=0) { return `₱${Number(n).toLocaleString('en-PH',{maximumFractionDigits:2})}`; }
 function formatDate(d) { return d ? new Date(d).toISOString().slice(0,10) : '—'; }
+function addMonths(dateStr, months) { const d = new Date(dateStr); d.setMonth(d.getMonth()+months); return d.toISOString().slice(0,10); }
 
-function addMonths(dateStr, months) {
-  const d = new Date(dateStr);
-  d.setMonth(d.getMonth() + months);
-  return d;
-}
-
-function cycleEnd(startDateStr) {
-  // end is start + 1 month - 1 day
-  const start = new Date(startDateStr);
-  const end = addMonths(startDateStr, 1);
-  end.setDate(end.getDate() - 1);
-  return end;
-}
-
-function firstCycleEnd(moveIn) {
-  return formatDate(cycleEnd(moveIn));
-}
-
-function init() {
-  cacheElements();
-  loadState();
-  setupNav();
-  setupForms();
-  els.rentMonth.value = monthKey(new Date());
-  renderAll();
-  setupDataManagement();
-}
-
-function cacheElements() {
-  els.navButtons = document.querySelectorAll('.nav-btn');
-  els.panels = document.querySelectorAll('.panel');
-  els.tenantTable = document.getElementById('tenantTable');
-  els.bedGrid = document.getElementById('bedGrid');
-  els.rentTable = document.getElementById('rentTable');
-  els.rentMonth = document.getElementById('rentMonth');
-  els.utilityForm = document.getElementById('utilityForm');
-  els.utilityTable = document.getElementById('utilityTable');
-  els.cashflowTable = document.getElementById('cashflowTable');
-  els.cashIncome = document.getElementById('cashIncome');
-  els.cashExpense = document.getElementById('cashExpense');
-  els.cashNet = document.getElementById('cashNet');
-  els.modal = document.getElementById('modal');
-  els.modalTitle = document.getElementById('modalTitle');
-  els.closeModal = document.getElementById('closeModal');
-  els.addTenantBtn = document.getElementById('addTenantBtn');
-  els.tenantForm = document.getElementById('tenantForm');
-  els.dashboard = {
-    totalRent: document.getElementById('totalRent'),
-    occupied: document.getElementById('occupiedBeds'),
-    vacant: document.getElementById('vacantBeds'),
-    rentCollected: document.getElementById('rentCollected'),
-    rentPending: document.getElementById('rentPending'),
-    utilityTotal: document.getElementById('utilityTotal'),
-    netProfit: document.getElementById('netProfit'),
-    upcomingPill: document.getElementById('upcoming'),
-    upcomingList: document.getElementById('upcomingList'),
-    overdueCount: document.getElementById('overdueTenants')
-  };
-  els.calcShare = document.getElementById('calcShare');
-  els.shareContainer = document.getElementById('shareContainer');
-  els.upcomingList = document.getElementById('upcomingList');
-  els.backupBtn = document.getElementById('backupBtn');
-  els.importInput = document.getElementById('importInput');
-}
-
-function setupNav() {
-  els.navButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      els.panels.forEach(p => p.classList.remove('active'));
-      document.getElementById(btn.dataset.target).classList.add('active');
-    });
-  });
-}
-
-function setupForms() {
-  els.addTenantBtn.addEventListener('click', () => openTenantModal());
-  els.closeModal.addEventListener('click', closeModal);
-  els.modal.addEventListener('click', (e) => { if (e.target === els.modal) closeModal(); });
-
-  els.tenantForm.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const form = new FormData(els.tenantForm);
-    const id = form.get('id') || uuid();
-    const payload = {
-      id,
-      name: form.get('name'),
-      unit: form.get('unit'),
-      bed: form.get('bed'),
-      moveIn: form.get('moveIn'),
-      moveInDate: form.get('moveIn'),
-      rentAmount: Number(form.get('rent')) || DEFAULT_RENT,
-      status: form.get('status'),
-    };
-    const existing = state.tenants.find(t => t.id === id);
-    if (existing) {
-      Object.assign(existing, payload);
-    } else {
-      payload.paidUntil = firstCycleEnd(payload.moveIn);
-      payload.lastPaymentDate = null;
-      payload.paymentHistory = [];
-      state.tenants.push(payload);
-    }
-    saveState();
-    closeModal();
-    renderAll();
-  });
-
-  els.rentMonth.addEventListener('change', () => {
-    renderRent();
-    renderDashboard();
-    renderTenants();
-  });
-
-  els.calcShare.addEventListener('click', buildShareInputs);
-  els.utilityForm.addEventListener('submit', handleUtilitySubmit);
-}
-
-function setupDataManagement() {
-  if (els.backupBtn) {
-    els.backupBtn.addEventListener('click', backupData);
-  }
-  if (els.importInput) {
-    els.importInput.addEventListener('change', handleImportFile);
-  }
-}
-
-function renderAll() {
-  renderTenants();
-  renderBeds();
-  renderRent();
-  renderUtilities();
-  renderCashflow();
-  renderDashboard();
-}
-
-function openTenantModal(tenant) {
-  els.modal.classList.remove('hidden');
-  els.modalTitle.textContent = tenant ? 'Edit Tenant' : 'Add Tenant';
-  els.tenantForm.reset();
-  els.tenantForm.querySelector('[name=id]').value = tenant?.id || '';
-  els.tenantForm.querySelector('[name=name]').value = tenant?.name || '';
-  els.tenantForm.querySelector('[name=moveIn]').value = tenant?.moveIn || '';
-  els.tenantForm.querySelector('[name=rent]').value = tenant?.rentAmount || DEFAULT_RENT;
-  els.tenantForm.querySelector('[name=status]').value = tenant?.status || 'active';
-  populateUnitSelect(tenant?.unit);
-  populateBedSelect(tenant?.bed, tenant?.id);
-  if (tenant?.unit) els.tenantForm.querySelector('[name=unit]').value = tenant.unit;
-  if (tenant?.bed) els.tenantForm.querySelector('[name=bed]').value = tenant.bed;
-}
-
-function closeModal() { els.modal.classList.add('hidden'); }
-
-function populateUnitSelect(selected) {
-  const unitSelect = els.tenantForm.querySelector('[name=unit]');
-  unitSelect.innerHTML = '';
-  ['6','7'].forEach(u => {
-    const opt = document.createElement('option');
-    opt.value = u; opt.textContent = `Unit ${u}`;
-    if (selected === u) opt.selected = true;
-    unitSelect.appendChild(opt);
-  });
-}
-
-function populateBedSelect(selectedBed, tenantId) {
-  const bedSelect = els.tenantForm.querySelector('[name=bed]');
-  bedSelect.innerHTML = '';
-  const occupiedBeds = state.tenants.filter(t => t.status === 'active' && t.id !== tenantId).map(t => t.bed);
-  beds.forEach(b => {
-    const opt = document.createElement('option');
-    opt.value = b; opt.textContent = b;
-    const isOccupied = occupiedBeds.includes(b);
-    opt.disabled = isOccupied && selectedBed !== b;
-    if (selectedBed === b) opt.selected = true;
-    bedSelect.appendChild(opt);
-  });
+function nextDueDate(tenant) {
+  const base = tenant.paidUntil || tenant.moveInDate;
+  return addMonths(base,1);
 }
 
 function tenantStatus(tenant) {
-  const today = new Date();
+  const now = new Date();
   const paidUntil = new Date(tenant.paidUntil);
-  if (today <= paidUntil) return { label: 'Paid', className: 'paid' };
-  const grace = new Date(paidUntil);
-  grace.setDate(grace.getDate() + GRACE_DAYS);
-  if (today <= grace) return { label: 'Due', className: 'pending' };
-  return { label: 'Overdue', className: 'unpaid' };
+  const due = new Date(nextDueDate(tenant));
+  if ((tenant.partialBalance||0) > 0) return { label:'Partial', className:'partial' };
+  if (now <= paidUntil) return { label:'Paid', className:'paid' };
+  if (now < due) return { label:'Upcoming', className:'pending' };
+  return { label:'Overdue', className:'unpaid' };
 }
 
-function nextDueDate(tenant) {
-  const next = new Date(tenant.paidUntil);
-  next.setDate(next.getDate() + 1);
-  return formatDate(next);
+function init() {
+  cacheEls();
+  loadState();
+  setupNav();
+  bindForms();
+  renderAll();
+}
+
+function cacheEls() {
+  els.panels = document.querySelectorAll('.panel');
+  els.navBtns = document.querySelectorAll('.nav-btn');
+  els.tenantTable = document.getElementById('tenantTable');
+  els.bedGrid = document.getElementById('bedGrid');
+  els.rentTable = document.getElementById('rentTable');
+  els.paymentHistory = document.getElementById('paymentHistory');
+  els.ledgerTable = document.getElementById('ledgerTable');
+  els.expenseForm = document.getElementById('expenseForm');
+  els.backupBtn = document.getElementById('backupBtn');
+  els.importInput = document.getElementById('importInput');
+  els.paymentModal = document.getElementById('paymentModal');
+  els.paymentForm = document.getElementById('paymentForm');
+  els.recordPaymentBtn = document.getElementById('recordPaymentBtn');
+  els.tenantModal = document.getElementById('tenantModal');
+  els.tenantForm = document.getElementById('tenantForm');
+  els.addTenantBtn = document.getElementById('addTenantBtn');
+  els.tenantModalTitle = document.getElementById('tenantModalTitle');
+  els.clearHistoryBtn = document.getElementById('clearHistoryBtn');
+  els.repairForm = document.getElementById('repairForm');
+  els.repairTable = document.getElementById('repairTable');
+  els.dashboard = {
+    totalRent: document.getElementById('totalRent'),
+    rentCollected: document.getElementById('rentCollected'),
+    rentPending: document.getElementById('rentPending'),
+    overdue: document.getElementById('overdueTenants'),
+    occupied: document.getElementById('occupiedBeds'),
+    vacant: document.getElementById('vacantBeds'),
+    cashBalance: document.getElementById('cashBalance'),
+    netProfit: document.getElementById('netProfit'),
+    upcomingCount: document.getElementById('upcomingCount'),
+    upcomingList: document.getElementById('upcomingList'),
+    overdueList: document.getElementById('overdueList'),
+    occ6: document.getElementById('occ6'),
+    occ7: document.getElementById('occ7'),
+    occTotal: document.getElementById('occTotal')
+  };
+  els.profit = {
+    net: document.getElementById('profitNet'),
+    angel: document.getElementById('profitAngel'),
+    brother: document.getElementById('profitBrother'),
+    angelProfit: document.getElementById('angelProfit'),
+    broProfit: document.getElementById('broProfit'),
+    angelWithdrawals: document.getElementById('angelWithdrawals'),
+    broWithdrawals: document.getElementById('broWithdrawals'),
+    angelBalance: document.getElementById('angelBalance'),
+    broBalance: document.getElementById('broBalance')
+  };
+  els.monthFilterDash = document.getElementById('monthFilterDash');
+  els.monthFilterProfit = document.getElementById('monthFilterProfit');
+}
+
+function setupNav() {
+  els.navBtns.forEach(btn => btn.addEventListener('click', () => {
+    els.panels.forEach(p => p.classList.remove('active'));
+    document.getElementById(btn.dataset.target).classList.add('active');
+  }));
+}
+
+function bindForms() {
+  els.addTenantBtn.addEventListener('click', () => openTenantModal());
+  document.querySelectorAll('.close').forEach(c => c.addEventListener('click', () => closeModal(c.dataset.close)));
+  els.tenantForm.addEventListener('submit', handleTenantSubmit);
+  els.recordPaymentBtn.addEventListener('click', openPaymentModal);
+  els.paymentForm.addEventListener('submit', handlePaymentSubmit);
+  els.expenseForm.addEventListener('submit', handleExpenseSubmit);
+  els.backupBtn.addEventListener('click', exportBackup);
+  els.importInput.addEventListener('change', importBackup);
+  if (els.repairForm) els.repairForm.addEventListener('submit', handleRepairSubmit);
+  if (els.clearHistoryBtn) els.clearHistoryBtn.addEventListener('click', () => {
+    const id = els.tenantForm.id.value;
+    if (!id) return;
+    if (!confirm('Clear payment history for this tenant?')) return;
+    clearPaymentHistory(id);
+  });
+  if (els.monthFilterDash) {
+    els.monthFilterDash.value = monthFilter;
+    els.monthFilterDash.addEventListener('change', e => { monthFilter = e.target.value || today().slice(0,7); renderAll(); });
+  }
+  if (els.monthFilterProfit) {
+    els.monthFilterProfit.value = monthFilter;
+    els.monthFilterProfit.addEventListener('change', e => { monthFilter = e.target.value || today().slice(0,7); renderAll(); });
+  }
+}
+
+function openTenantModal(tenant) {
+  populateUnitSelect();
+  populateBedSelect(tenant?.bedSpace);
+  els.tenantForm.reset();
+  if (tenant) {
+    els.tenantModalTitle.textContent = 'Edit Tenant';
+    els.tenantForm.id.value = tenant.id;
+    els.tenantForm.name.value = tenant.name;
+    els.tenantForm.unit.value = tenant.unit;
+    els.tenantForm.bedSpace.value = tenant.bedSpace;
+    els.tenantForm.moveInDate.value = tenant.moveInDate;
+    els.tenantForm.moveOutDate.value = tenant.moveOutDate || '';
+    els.tenantForm.rentAmount.value = tenant.rentAmount;
+    els.tenantForm.status.value = tenant.status;
+  } else {
+    els.tenantModalTitle.textContent = 'Add Tenant';
+    els.tenantForm.id.value = '';
+    els.tenantForm.moveInDate.value = today();
+  }
+  els.tenantModal.classList.remove('hidden');
+}
+
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+function populateUnitSelect() {
+  const sel = els.tenantForm.unit;
+  sel.innerHTML = '<option value="6">Unit 6</option><option value="7">Unit 7</option>';
+}
+
+function populateBedSelect(selected) {
+  const sel = els.tenantForm.bedSpace;
+  sel.innerHTML = '';
+  BED_SPACES.forEach(b => {
+    const opt = document.createElement('option');
+    opt.value = b; opt.textContent = b;
+    const isOcc = state.tenants.some(t => isActive(t) && t.bedSpace===b && t.id !== els.tenantForm.id.value);
+    opt.disabled = isOcc && selected !== b;
+    if (selected === b) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function handleTenantSubmit(e) {
+  e.preventDefault();
+  const f = new FormData(els.tenantForm);
+  const id = f.get('id') || uuid();
+  const existing = state.tenants.find(t => t.id === id);
+  const payload = {
+    id,
+    name: f.get('name'),
+    unit: f.get('unit'),
+    bedSpace: normalizeBed(f.get('bedSpace')),
+    moveInDate: f.get('moveInDate'),
+    moveOutDate: f.get('moveOutDate') || null,
+    rentAmount: Number(f.get('rentAmount')) || DEFAULT_RENT,
+    status: f.get('status')
+  };
+  if (existing) {
+    Object.assign(existing, payload);
+  } else {
+    payload.paidUntil = payload.moveInDate;
+    payload.lastPaymentDate = null;
+    payload.paymentHistory = [];
+    payload.partialBalance = 0;
+    state.tenants.push(payload);
+  }
+  saveState();
+  closeModal('tenantModal');
+  renderAll();
+}
+
+function openPaymentModal() {
+  const sel = els.paymentForm.tenantId;
+  sel.innerHTML = '';
+  state.tenants.filter(t=>isActive(t)).forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t.id; opt.textContent = `${t.name} (${t.bedSpace})`;
+    sel.appendChild(opt);
+  });
+  els.paymentForm.amount.value = DEFAULT_RENT;
+  els.paymentForm.paymentDate.value = today();
+  els.paymentModal.classList.remove('hidden');
+}
+
+function handlePaymentSubmit(e) {
+  e.preventDefault();
+  const f = new FormData(els.paymentForm);
+  const tenant = state.tenants.find(t => t.id === f.get('tenantId'));
+  if (!tenant) return;
+  const amount = Number(f.get('amount')) || tenant.rentAmount;
+  const payDate = f.get('paymentDate') || today();
+  const method = f.get('method');
+  const collectedBy = f.get('collectedBy');
+  const notes = f.get('notes');
+
+  let remaining = amount + (tenant.partialBalance || 0);
+  let currentDue = nextDueDate(tenant);
+  const historyEntries = [];
+
+  while (remaining >= tenant.rentAmount) {
+    remaining -= tenant.rentAmount;
+    tenant.paidUntil = currentDue;
+    historyEntries.push({ dueDate: currentDue, paymentDate: payDate, amount: tenant.rentAmount, status:'Paid', remaining:0 });
+    currentDue = addMonths(currentDue,1);
+  }
+  if (remaining > 0) {
+    historyEntries.push({ dueDate: currentDue, paymentDate: payDate, amount: remaining, status:'Partial', remaining: tenant.rentAmount - remaining });
+  }
+  tenant.partialBalance = remaining;
+  tenant.lastPaymentDate = payDate;
+  tenant.paymentHistory = [...(tenant.paymentHistory||[]), ...historyEntries];
+
+  const paymentRecord = {
+    id: uuid(), tenantId: tenant.id, amount, paymentDate: payDate, method, collectedBy, notes,
+    coversUntil: tenant.paidUntil, partialCarry: tenant.partialBalance
+  };
+  state.payments.push(paymentRecord);
+
+  state.ledger.push({
+    id: uuid(), date: payDate, type:'Income', category:'Rent Payment', description:`Rent - ${tenant.name}`, amount, unit: tenant.unit
+  });
+
+  saveState();
+  closeModal('paymentModal');
+  renderAll();
+}
+
+function clearPaymentHistory(tenantId) {
+  const tenant = state.tenants.find(t=>t.id===tenantId);
+  if (!tenant) return;
+  tenant.paymentHistory = [];
+  tenant.paidUntil = tenant.moveInDate;
+  tenant.partialBalance = 0;
+  tenant.lastPaymentDate = null;
+  state.payments = state.payments.filter(p=>p.tenantId !== tenantId);
+  state.ledger = state.ledger.filter(l=>!(l.category==='Rent Payment' && (l.description||'').includes(tenant.name)));
+  saveState();
+  renderAll();
+}
+
+function resetTenantCycle(tenantId) {
+  clearPaymentHistory(tenantId);
+}
+
+function handleExpenseSubmit(e) {
+  e.preventDefault();
+  const f = new FormData(els.expenseForm);
+  const date = f.get('date');
+  const category = f.get('category');
+  const amount = Number(f.get('amount')) || 0;
+  const desc = f.get('description');
+  const unit = f.get('unit') || '';
+  state.expenses.push({ id: uuid(), date, category, amount, description: desc, unit });
+  state.ledger.push({ id: uuid(), date, type:'Expense', category, description: desc, amount: -amount, unit });
+  saveState();
+  els.expenseForm.reset();
+  renderAll();
+}
+
+function handleRepairSubmit(e) {
+  e.preventDefault();
+  const f = new FormData(els.repairForm);
+  const date = f.get('date');
+  const unit = f.get('unit');
+  const desc = f.get('description');
+  const cost = Number(f.get('cost')) || 0;
+  state.repairs.push({ id: uuid(), date, unit, description: desc, cost });
+  state.expenses.push({ id: uuid(), date, category:'Repairs', amount: cost, description: desc, unit });
+  state.ledger.push({ id: uuid(), date, type:'Expense', category:'Repairs', description: desc, amount: -cost, unit });
+  saveState();
+  els.repairForm.reset();
+  renderAll();
+}
+
+function renderRepairs() {
+  if (!els.repairTable) return;
+  els.repairTable.innerHTML='';
+  state.repairs.slice().reverse().forEach(r => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${r.date}</td><td>${r.unit}</td><td>${r.description}</td><td>${formatCurrency(r.cost)}</td>`;
+    els.repairTable.appendChild(tr);
+  });
 }
 
 function renderTenants() {
-  els.tenantTable.innerHTML = '';
+  els.tenantTable.innerHTML='';
   state.tenants.forEach(t => {
     const status = tenantStatus(t);
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${t.name}</td>
-      <td>${t.bed}</td>
+      <td>${t.bedSpace}</td>
       <td>${t.unit}</td>
-      <td>${formatDate(t.moveIn)}</td>
+      <td>${formatDate(t.moveInDate)}</td>
+      <td>${t.moveOutDate ? formatDate(t.moveOutDate) : '—'}</td>
       <td>${formatCurrency(t.rentAmount)}</td>
       <td>${formatDate(t.paidUntil)}</td>
       <td>${nextDueDate(t)}</td>
       <td><span class="badge ${status.className}">${status.label}</span></td>
-      <td><span class="status-pill status-${t.status}">${t.status === 'active' ? 'Active' : 'Moved out'}</span></td>
       <td class="actions">
+        <button class="secondary" data-reset="${t.id}">Reset Cycle</button>
         <button class="secondary" data-edit="${t.id}">Edit</button>
         <button class="secondary" data-remove="${t.id}">Remove</button>
-      </td>`;
+      </td>
+    `;
     els.tenantTable.appendChild(tr);
   });
-
-  els.tenantTable.querySelectorAll('[data-edit]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tenant = state.tenants.find(t => t.id === btn.dataset.edit);
-      openTenantModal(tenant);
-    });
-  });
-  els.tenantTable.querySelectorAll('[data-remove]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id = btn.dataset.remove;
-      state.tenants = state.tenants.filter(t => t.id !== id);
-      saveState();
-      renderAll();
-    });
-  });
+  els.tenantTable.querySelectorAll('[data-edit]').forEach(btn => btn.addEventListener('click', () => openTenantModal(state.tenants.find(t=>t.id===btn.dataset.edit))));
+  els.tenantTable.querySelectorAll('[data-remove]').forEach(btn => btn.addEventListener('click', () => { state.tenants = state.tenants.filter(t=>t.id!==btn.dataset.remove); saveState(); renderAll(); }));
+  els.tenantTable.querySelectorAll('[data-reset]').forEach(btn => btn.addEventListener('click', () => { if(confirm('Reset rent cycle and clear payment history?')) resetTenantCycle(btn.dataset.reset); }));
 }
 
 function renderBeds() {
-  els.bedGrid.innerHTML = '';
-  beds.forEach(b => {
-    const occupant = state.tenants.find(t => t.bed === b && t.status === 'active');
-    const card = document.createElement('div');
-    card.className = 'bed';
-    card.innerHTML = `
-      <div class="tag ${occupant ? 'occupied' : 'vacant'}">${occupant ? 'Occupied' : 'Vacant'}</div>
-      <strong>${b}</strong>
-      <small>Unit ${b.split('-')[0]}</small>
-      <small>${occupant ? occupant.name : '—'}</small>
-    `;
-    els.bedGrid.appendChild(card);
+  els.bedGrid.innerHTML='';
+  BED_SPACES.forEach(b => {
+    const occ = state.tenants.find(t=>t.bedSpace===b && isActive(t));
+    const div = document.createElement('div');
+    div.className='bed';
+    div.innerHTML = `<div class="tag ${occ?'occupied':'vacant'}">${occ?'Occupied':'Vacant'}</div><strong>${b}</strong><small>Unit ${b.startsWith('7')?'7':'6'}</small><small>${occ?occ.name:'—'}</small>`;
+    els.bedGrid.appendChild(div);
   });
 }
 
 function renderRent() {
-  els.rentTable.innerHTML = '';
-  state.tenants.forEach(t => {
+  els.rentTable.innerHTML='';
+  els.paymentHistory.innerHTML='';
+  state.tenants.filter(isActive).forEach(t => {
     const status = tenantStatus(t);
+    const due = nextDueDate(t);
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${t.name}</td>
-      <td>${formatDate(t.moveIn)}</td>
       <td>${formatDate(t.paidUntil)}</td>
-      <td>${nextDueDate(t)}</td>
+      <td>${due}</td>
+      <td>${formatDate(t.lastPaymentDate)}</td>
       <td><span class="badge ${status.className}">${status.label}</span></td>
       <td>${formatCurrency(t.rentAmount)}</td>
-      <td>${t.lastPaymentDate ? formatDate(t.lastPaymentDate) : '—'}</td>
-      <td>${status.label === 'Paid' ? '' : `<button class="primary" data-pay="${t.id}">Mark Paid</button>`}</td>
+      <td>
+        ${status.label === 'Paid' && t.partialBalance===0 ? '' : `<button class="primary" data-pay="${t.id}">Record</button>`}
+        <button class="secondary" data-reset="${t.id}">Reset</button>
+      </td>
     `;
     els.rentTable.appendChild(tr);
-  });
 
-  els.rentTable.querySelectorAll('[data-pay]').forEach(btn => {
-    btn.addEventListener('click', () => markRentPaid(btn.dataset.pay));
+    const card = document.createElement('div');
+    card.className='list-card';
+    card.innerHTML = `<strong>${t.name}</strong>`;
+    const ul = document.createElement('ul');
+    ul.className='chip-list';
+    (t.paymentHistory||[]).slice().reverse().forEach(p => {
+      const li = document.createElement('li'); li.className='chip';
+      const color = p.status==='Paid' ? 'paid' : (p.status==='Partial' ? 'partial' : 'pending');
+      const meta = [p.collectedBy, p.method].filter(Boolean).join(' • ');
+      li.innerHTML = `<span class="badge ${color}">${p.status}</span> ${p.dueDate} • ${formatCurrency(p.amount)} • bal ${p.remaining ?? 0}${meta ? ' • '+meta : ''}`;
+      ul.appendChild(li);
+    });
+    card.appendChild(ul);
+    els.paymentHistory.appendChild(card);
   });
+  els.rentTable.querySelectorAll('[data-pay]').forEach(btn => btn.addEventListener('click', () => { openPaymentModal(); els.paymentForm.tenantId.value = btn.dataset.pay; }));
+  els.rentTable.querySelectorAll('[data-reset]').forEach(btn => btn.addEventListener('click', () => { if(confirm('Reset rent cycle and clear payment history?')) resetTenantCycle(btn.dataset.reset); }));
 }
 
-function markRentPaid(tenantId) {
-  const tenant = state.tenants.find(t => t.id === tenantId);
-  if (!tenant) return;
-  const start = tenant.paidUntil ? new Date(tenant.paidUntil) : new Date(tenant.moveIn);
-  const newStart = new Date(start);
-  newStart.setDate(newStart.getDate() + 1);
-  const newEnd = cycleEnd(formatDate(newStart));
-  tenant.paidUntil = formatDate(newEnd);
-  tenant.lastPaymentDate = formatDate(new Date());
-  tenant.paymentHistory = tenant.paymentHistory || [];
-  tenant.paymentHistory.push({ date: tenant.lastPaymentDate, amount: tenant.rentAmount, coversUntil: tenant.paidUntil });
-
-  state.cashflow.push({
-    id: uuid(),
-    date: tenant.lastPaymentDate,
-    description: `Rent - ${tenant.name}`,
-    income: tenant.rentAmount,
-    expense: 0
-  });
-
-  saveState();
-  renderRent();
-  renderCashflow();
-  renderDashboard();
-  renderTenants();
-}
-
-function buildShareInputs() {
-  const form = new FormData(els.utilityForm);
-  const total = (Number(form.get('electricity'))||0) + (Number(form.get('water'))||0);
-  const activeTenants = state.tenants.filter(t => t.status === 'active');
-  const baseShare = activeTenants.length ? (total / activeTenants.length) : 0;
-  els.shareContainer.innerHTML = '';
-  activeTenants.forEach(t => {
-    const div = document.createElement('div');
-    div.className = 'share-item';
-    div.innerHTML = `
-      <div style="font-weight:600;">${t.name}</div>
-      <label style="color:var(--muted);">Share (₱)<input type="number" step="0.01" name="share-${t.id}" value="${baseShare.toFixed(2)}"></label>
-    `;
-    els.shareContainer.appendChild(div);
-  });
-}
-
-function handleUtilitySubmit(e) {
-  e.preventDefault();
-  const form = new FormData(els.utilityForm);
-  const month = form.get('month');
-  const electricity = Number(form.get('electricity')) || 0;
-  const water = Number(form.get('water')) || 0;
-  const total = electricity + water;
-  const shares = state.tenants.filter(t => t.status === 'active').map(t => ({
-    tenantId: t.id,
-    amount: Number(form.get(`share-${t.id}`)) || 0
-  }));
-
-  state.utilities.push({ id: uuid(), month, electricity, water, total, shares });
-  state.cashflow.push({ id: uuid(), date: new Date().toISOString().slice(0,10), description: `Utilities ${month}`, income: 0, expense: total });
-  saveState();
-  renderUtilities();
-  renderCashflow();
-  renderDashboard();
-  els.utilityForm.reset();
-  els.shareContainer.innerHTML = '';
-}
-
-function renderUtilities() {
-  els.utilityTable.innerHTML = '';
-  state.utilities.slice().reverse().forEach(u => {
-    const avg = u.shares && u.shares.length ? u.shares.reduce((s,c)=>s+c.amount,0)/u.shares.length : 0;
+function renderLedger() {
+  const rows = state.ledger.slice().sort((a,b)=> a.date.localeCompare(b.date));
+  let bal = 0;
+  els.ledgerTable.innerHTML='';
+  rows.forEach(r => {
+    bal += Number(r.amount)||0;
     const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${u.month}</td>
-      <td>${formatCurrency(u.electricity)}</td>
-      <td>${formatCurrency(u.water)}</td>
-      <td>${formatCurrency(u.total)}</td>
-      <td>${formatCurrency(avg)}</td>
-    `;
-    els.utilityTable.appendChild(tr);
+    tr.innerHTML = `<td>${r.date}</td><td>${r.type||''}</td><td>${r.category||''}</td><td>${r.description||''}</td><td>${formatCurrency(r.amount)}</td><td>${r.unit||''}</td><td>${formatCurrency(bal)}</td>`;
+    els.ledgerTable.appendChild(tr);
   });
-}
-
-function renderCashflow() {
-  els.cashflowTable.innerHTML = '';
-  state.cashflow.slice().reverse().forEach(item => {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${item.date}</td>
-      <td>${item.description}</td>
-      <td>${item.income ? formatCurrency(item.income) : ''}</td>
-      <td>${item.expense ? formatCurrency(item.expense) : ''}</td>
-    `;
-    els.cashflowTable.appendChild(tr);
-  });
-  const income = state.cashflow.reduce((s,c)=>s+(c.income||0),0);
-  const expense = state.cashflow.reduce((s,c)=>s+(c.expense||0),0);
-  els.cashIncome.textContent = formatCurrency(income);
-  els.cashExpense.textContent = formatCurrency(expense);
-  els.cashNet.textContent = formatCurrency(income - expense);
+  state._cashBalance = bal;
 }
 
 function renderDashboard() {
-  const activeTenants = state.tenants.filter(t => t.status === 'active');
-  const occupied = activeTenants.length;
-  const vacant = beds.length - occupied;
-  const currentMonth = monthKey(new Date());
-  const rentCollected = state.cashflow
-    .filter(c => c.income && (c.date || '').startsWith(currentMonth))
-    .reduce((s,c)=>s+c.income,0);
-  const totalRent = activeTenants.reduce((s,c)=>s+(Number(c.rentAmount)||0),0);
-  const pendingRent = activeTenants
-    .filter(t => tenantStatus(t).label !== 'Paid')
-    .reduce((s,c)=>s+(Number(c.rentAmount)||0),0);
-  const utilityCurrent = state.utilities.filter(u => (u.month||'').startsWith(currentMonth)).reduce((s,c)=>s+c.total,0);
-  const net = rentCollected - utilityCurrent;
-  const overdueCount = activeTenants.filter(t => tenantStatus(t).label === 'Overdue').length;
+  const active = state.tenants.filter(t=>isActive(t));
+  const occupied = active.length;
+  const vacant = BED_SPACES.length - occupied;
+  const totalRent = active.reduce((s,t)=>s+(t.rentAmount||DEFAULT_RENT),0);
+  const month = monthFilter || today().slice(0,7);
+  const collected = state.ledger.filter(l=>l.type==='Income' && l.category==='Rent Payment' && l.date.startsWith(month)).reduce((s,c)=>s+c.amount,0);
+  const pending = active.filter(t=>tenantStatus(t).label!=='Paid' || (t.partialBalance||0)>0)
+    .reduce((s,t)=>s+((t.rentAmount||DEFAULT_RENT) - (t.partialBalance||0)),0);
+  const overdueTenants = active.filter(t=>tenantStatus(t).label==='Overdue');
 
   els.dashboard.totalRent.textContent = formatCurrency(totalRent);
+  els.dashboard.rentCollected.textContent = formatCurrency(collected);
+  els.dashboard.rentPending.textContent = formatCurrency(pending);
+  els.dashboard.overdue.textContent = overdueTenants.length;
   els.dashboard.occupied.textContent = occupied;
   els.dashboard.vacant.textContent = vacant;
-  els.dashboard.rentCollected.textContent = formatCurrency(rentCollected);
-  els.dashboard.rentPending.textContent = formatCurrency(pendingRent);
-  els.dashboard.utilityTotal.textContent = formatCurrency(utilityCurrent);
-  els.dashboard.netProfit.textContent = formatCurrency(net);
-  if (els.dashboard.overdueCount) els.dashboard.overdueCount.textContent = overdueCount;
+  els.dashboard.cashBalance.textContent = formatCurrency(state._cashBalance||0);
 
-  renderUpcomingDue();
-}
-
-function renderUpcomingDue() {
-  const today = new Date();
-  const upcoming = state.tenants.filter(t => {
-    const status = tenantStatus(t);
-    if (status.label === 'Paid') return false;
-    const dueDate = new Date(t.paidUntil);
-    const diff = (dueDate - today)/(1000*60*60*24);
-    return diff >= 0 && diff <= 5;
+  const upcoming = active.filter(t => {
+    const due = new Date(nextDueDate(t));
+    const diff = (due - new Date())/(1000*60*60*24);
+    return diff >=0 && diff <=7;
   });
-  els.dashboard.upcomingPill.textContent = `Upcoming dues: ${upcoming.length}`;
-  els.upcomingList.innerHTML = '';
+  els.dashboard.upcomingCount.textContent = `Upcoming (7d): ${upcoming.length}`;
+  els.dashboard.upcomingList.innerHTML='';
   upcoming.forEach(t => {
     const li = document.createElement('li');
-    li.className = 'chip';
-    li.textContent = `${t.name} - due ${formatDate(nextDueDate(t))}`;
-    els.upcomingList.appendChild(li);
+    const due = new Date(nextDueDate(t));
+    const diff = Math.floor((due - new Date())/(1000*60*60*24));
+    const color = diff === 0 ? 'red' : diff <=3 ? 'yellow' : 'green';
+    li.className=`chip ${color}`;
+    li.innerHTML = `${t.name} — Due ${nextDueDate(t)} (${formatCurrency(t.rentAmount - (t.partialBalance||0))})`;
+    els.dashboard.upcomingList.appendChild(li);
   });
+  els.dashboard.overdueList.innerHTML='';
+  overdueTenants.forEach(t => { const li=document.createElement('li'); li.className='chip'; li.innerHTML = `<span class="badge unpaid">Overdue</span> ${nextDueDate(t)} — ${t.name}`; els.dashboard.overdueList.appendChild(li); });
+
+  els.dashboard.occ6.textContent = `${active.filter(t=>t.unit==='6').length}/8`;
+  els.dashboard.occ7.textContent = `${active.filter(t=>t.unit==='7').length}/8`;
+  els.dashboard.occTotal.textContent = `${occupied}/16`;
+
+  renderProfit();
 }
 
-function backupData() {
-  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+function renderProfit() {
+  const month = monthFilter || today().slice(0,7);
+  const incomeRent = state.ledger.filter(l=>l.type==='Income' && l.date.startsWith(month)).reduce((s,c)=>s+c.amount,0);
+  const landlordRent = (state.settings.landlordRent6 + state.settings.landlordRent7);
+  const utilityBase = state.settings.utilityBase * 2;
+  const repairs = state.expenses.filter(e=>e.category==='Repairs' && e.date.startsWith(month)).reduce((s,c)=>s+c.amount,0);
+  const misc = state.expenses.filter(e=>e.category==='Miscellaneous' && e.date.startsWith(month)).reduce((s,c)=>s+c.amount,0);
+  const net = incomeRent - landlordRent - utilityBase - repairs - misc;
+  els.profit.net.textContent = formatCurrency(net);
+  els.dashboard.netProfit.textContent = formatCurrency(net);
+  const share = net/2;
+  els.profit.angel.textContent = formatCurrency(share);
+  els.profit.brother.textContent = formatCurrency(share);
+
+  const withdrawalsAngel = state.ledger.filter(l=>l.category==='Withdrawal-Angel').reduce((s,c)=>s + Math.abs(c.amount||0),0);
+  const withdrawalsBro = state.ledger.filter(l=>l.category==='Withdrawal-Brother').reduce((s,c)=>s + Math.abs(c.amount||0),0);
+  els.profit.angelWithdrawals.textContent = formatCurrency(withdrawalsAngel);
+  els.profit.broWithdrawals.textContent = formatCurrency(withdrawalsBro);
+  const profitToDate = state.ledger.reduce((s,l)=>s+(l.amount||0),0);
+  els.profit.angelProfit.textContent = formatCurrency(profitToDate/2);
+  els.profit.broProfit.textContent = formatCurrency(profitToDate/2);
+  els.profit.angelBalance.textContent = formatCurrency(54000 + profitToDate/2 - withdrawalsAngel);
+  els.profit.broBalance.textContent = formatCurrency(54000 + profitToDate/2 - withdrawalsBro);
+}
+
+function renderUtilities() { /* placeholder for future UI */ }
+
+function renderAll() {
+  renderLedger();
+  renderTenants();
+  renderBeds();
+  renderRent();
+  renderUtilities();
+  renderDashboard();
+  renderRepairs();
+}
+
+function exportBackup() {
+  const blob = new Blob([JSON.stringify(state,null,2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'rent-tracker-backup.json';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  const a = document.createElement('a'); a.href=url; a.download='bedspace-backup.json'; a.click(); URL.revokeObjectURL(url);
 }
 
-function handleImportFile(e) {
+function importBackup(e) {
   const file = e.target.files[0];
   if (!file) return;
   if (!confirm('Importing will overwrite existing data. Continue?')) { e.target.value=''; return; }
@@ -489,15 +561,12 @@ function handleImportFile(e) {
   reader.onload = () => {
     try {
       const data = JSON.parse(reader.result);
-      ['tenants','rentRecords','utilities','cashflow'].forEach(k => {
-        state[k] = data[k] || [];
-      });
+      ['tenants','payments','expenses','utilities','repairs','ledger','settings'].forEach(k => { state[k] = data[k] || state[k]; });
+      migrateSettings();
       migrateTenants();
       saveState();
-      location.reload();
-    } catch (err) {
-      alert('Import failed: invalid JSON');
-    }
+      renderAll();
+    } catch(err) { alert('Import failed: invalid JSON'); }
   };
   reader.readAsText(file);
 }

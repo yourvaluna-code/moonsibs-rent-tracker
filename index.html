@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bedspace Manager</title>
+  <title>Bedspace Manager v2 (Staged)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
@@ -11,14 +11,15 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">Bedspace Manager</div>
+    <div class="brand">Bedspace Manager • Staged</div>
     <nav class="nav">
       <button class="nav-btn" data-target="dashboard">Dashboard</button>
       <button class="nav-btn" data-target="tenants">Tenants</button>
       <button class="nav-btn" data-target="beds">Beds</button>
-      <button class="nav-btn" data-target="rent">Rent Tracker</button>
-      <button class="nav-btn" data-target="utilities">Utilities</button>
-      <button class="nav-btn" data-target="cashflow">Cashflow</button>
+      <button class="nav-btn" data-target="rent">Rent</button>
+      <button class="nav-btn" data-target="expenses">Expenses</button>
+      <button class="nav-btn" data-target="ledger">Ledger</button>
+      <button class="nav-btn" data-target="profit">Profit</button>
       <button class="nav-btn" data-target="data">Data</button>
     </nav>
   </header>
@@ -27,46 +28,52 @@
     <section id="dashboard" class="panel active">
       <div class="section-head">
         <h2>Dashboard</h2>
-        <div id="upcoming" class="pill muted">Upcoming dues: 0</div>
+        <div class="inline">
+          <label for="monthFilterDash">Month</label>
+          <input type="month" id="monthFilterDash">
+        </div>
+        <div class="pill muted" id="upcomingCount">Upcoming (7d): 0</div>
       </div>
       <div class="cards">
         <div class="card highlight"><p>Total Monthly Rent</p><h3 id="totalRent">₱0</h3></div>
-        <div class="card success"><p>Collected</p><h3 id="rentCollected">₱0</h3></div>
-        <div class="card warn"><p>Pending</p><h3 id="rentPending">₱0</h3></div>
+        <div class="card success"><p>Collected (month)</p><h3 id="rentCollected">₱0</h3></div>
+        <div class="card warn"><p>Pending (month)</p><h3 id="rentPending">₱0</h3></div>
         <div class="card"><p>Overdue Tenants</p><h3 id="overdueTenants">0</h3></div>
         <div class="card"><p>Occupied Beds</p><h3 id="occupiedBeds">0</h3></div>
         <div class="card"><p>Vacant Beds</p><h3 id="vacantBeds">16</h3></div>
-        <div class="card"><p>Utility Expenses (mo)</p><h3 id="utilityTotal">₱0</h3></div>
-        <div class="card"><p>Net Profit (mo)</p><h3 id="netProfit">₱0</h3></div>
+        <div class="card"><p>Cash Balance</p><h3 id="cashBalance">₱0</h3></div>
+        <div class="card"><p>Net Profit (month)</p><h3 id="netProfit">₱0</h3></div>
+      </div>
+      <div class="grid two">
+        <div class="list-card">
+          <div class="list-head"><h3>Upcoming (7 days)</h3></div>
+          <ul id="upcomingList" class="chip-list"></ul>
+        </div>
+        <div class="list-card">
+          <div class="list-head"><h3>Overdue</h3></div>
+          <ul id="overdueList" class="chip-list"></ul>
+        </div>
       </div>
       <div class="list-card">
-        <div class="list-head">
-          <h3>Upcoming rent due (within 5 days)</h3>
-          <small>Grace period: 3 days after due.</small>
+        <div class="list-head"><h3>Occupancy</h3></div>
+        <div class="occupancy">
+          <div>Unit 6: <span id="occ6">0/8</span></div>
+          <div>Unit 7: <span id="occ7">0/8</span></div>
+          <div>Total: <span id="occTotal">0/16</span></div>
         </div>
-        <ul id="upcomingList" class="chip-list"></ul>
       </div>
     </section>
 
     <section id="tenants" class="panel">
       <div class="section-head">
         <h2>Tenants</h2>
-        <button id="addTenantBtn" class="primary large-btn">Add Tenant</button>
+        <button class="primary" id="addTenantBtn">Add Tenant</button>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Bed</th>
-              <th>Unit</th>
-              <th>Move-in</th>
-              <th>Rent (₱)</th>
-              <th>Paid Until</th>
-              <th>Next Due</th>
-              <th>Rent Status</th>
-              <th>Status</th>
-              <th>Actions</th>
+              <th>Name</th><th>Bed</th><th>Unit</th><th>Move-in</th><th>Move-out</th><th>Rent</th><th>Paid Until</th><th>Next Due</th><th>Status</th><th>Actions</th>
             </tr>
           </thead>
           <tbody id="tenantTable"></tbody>
@@ -75,135 +82,162 @@
     </section>
 
     <section id="beds" class="panel">
-      <div class="section-head">
-        <h2>Bed Management</h2>
-      </div>
+      <div class="section-head"><h2>Beds</h2></div>
       <div class="grid" id="bedGrid"></div>
     </section>
 
     <section id="rent" class="panel">
       <div class="section-head">
-        <h2>Rent Tracker</h2>
-        <div class="inline">
-          <label for="rentMonth">Month (for reference)</label>
-          <input type="month" id="rentMonth">
-        </div>
+        <h2>Rent & Payments</h2>
+        <button class="primary" id="recordPaymentBtn">Record Payment</button>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Tenant</th>
-              <th>Move-in</th>
-              <th>Paid Until</th>
-              <th>Next Due</th>
-              <th>Status</th>
-              <th>Rent (₱)</th>
-              <th>Last Payment</th>
-              <th>Actions</th>
+              <th>Tenant</th><th>Paid Until</th><th>Next Due</th><th>Last Payment</th><th>Status</th><th>Actions</th>
             </tr>
           </thead>
           <tbody id="rentTable"></tbody>
         </table>
       </div>
+      <div class="list-card">
+        <div class="list-head"><h3>Payment History</h3></div>
+        <div id="paymentHistory"></div>
+      </div>
     </section>
 
-    <section id="utilities" class="panel">
-      <div class="section-head">
-        <h2>Utilities</h2>
-      </div>
-      <form id="utilityForm" class="card form-card">
+    <section id="expenses" class="panel">
+      <div class="section-head"><h2>Expenses</h2></div>
+      <form id="expenseForm" class="card form-card">
         <div class="form-grid">
-          <label>Billing Month<input type="month" name="month" required></label>
-          <label>Electricity (₱)<input type="number" name="electricity" min="0" step="0.01" required></label>
-          <label>Water (₱)<input type="number" name="water" min="0" step="0.01" required></label>
+          <label>Date<input type="date" name="date" required></label>
+          <label>Category<select name="category" required>
+            <option>Landlord Rent</option>
+            <option>Utilities</option>
+            <option>Repairs</option>
+            <option>Maintenance</option>
+            <option>Furniture</option>
+            <option>Miscellaneous</option>
+          </select></label>
+          <label>Amount (₱)<input type="number" name="amount" min="0" step="0.01" required></label>
+          <label>Description<input name="description"></label>
+          <label>Unit<select name="unit"><option value="">—</option><option>6</option><option>7</option></select></label>
         </div>
-        <button type="button" id="calcShare" class="secondary large-btn">Calculate Split</button>
-        <div id="shareContainer"></div>
-        <div class="actions">
-          <button type="submit" class="primary large-btn">Save Utility Bill</button>
-        </div>
+        <div class="actions"><button class="primary" type="submit">Record Expense</button></div>
       </form>
+      <div class="list-card">
+        <div class="list-head"><h3>Repair Log</h3></div>
+        <form id="repairForm" class="form-grid">
+          <label>Date<input type="date" name="date" required></label>
+          <label>Unit<select name="unit" required><option>6</option><option>7</option></select></label>
+          <label>Description<input name="description" required></label>
+          <label>Cost (₱)<input type="number" name="cost" min="0" step="0.01" required></label>
+          <div class="actions"><button class="primary" type="submit">Log Repair</button></div>
+        </form>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Date</th><th>Unit</th><th>Description</th><th>Cost</th></tr></thead>
+            <tbody id="repairTable"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="ledger" class="panel">
+      <div class="section-head"><h2>Ledger</h2></div>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr>
-              <th>Month</th>
-              <th>Electricity</th>
-              <th>Water</th>
-              <th>Total</th>
-              <th>Per Tenant Avg</th>
-            </tr>
+            <tr><th>Date</th><th>Type</th><th>Category</th><th>Description</th><th>Amount</th><th>Unit</th><th>Balance</th></tr>
           </thead>
-          <tbody id="utilityTable"></tbody>
+          <tbody id="ledgerTable"></tbody>
         </table>
       </div>
     </section>
 
-    <section id="cashflow" class="panel">
+    <section id="profit" class="panel">
       <div class="section-head">
-        <h2>Cashflow</h2>
+        <h2>Profit & Capital</h2>
+        <div class="inline">
+          <label for="monthFilterProfit">Month</label>
+          <input type="month" id="monthFilterProfit">
+        </div>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Description</th>
-              <th>Income</th>
-              <th>Expense</th>
-            </tr>
-          </thead>
-          <tbody id="cashflowTable"></tbody>
-          <tfoot>
-            <tr>
-              <th colspan="2">Totals</th>
-              <th id="cashIncome">₱0</th>
-              <th id="cashExpense">₱0</th>
-            </tr>
-            <tr>
-              <th colspan="2">Net</th>
-              <th colspan="2" id="cashNet">₱0</th>
-            </tr>
-          </tfoot>
-        </table>
+      <div class="cards">
+        <div class="card"><p>Monthly Net Profit</p><h3 id="profitNet">₱0</h3></div>
+        <div class="card"><p>Angel Share (50%)</p><h3 id="profitAngel">₱0</h3></div>
+        <div class="card"><p>Brother Share (50%)</p><h3 id="profitBrother">₱0</h3></div>
+      </div>
+      <div class="grid two">
+        <div class="list-card">
+          <div class="list-head"><h3>Angel Capital</h3></div>
+          <p>Initial: ₱54,000</p>
+          <p>Profit Earned: <span id="angelProfit">₱0</span></p>
+          <p>Withdrawals: <span id="angelWithdrawals">₱0</span></p>
+          <p>Current Balance: <span id="angelBalance">₱0</span></p>
+        </div>
+        <div class="list-card">
+          <div class="list-head"><h3>Brother Capital</h3></div>
+          <p>Initial: ₱54,000</p>
+          <p>Profit Earned: <span id="broProfit">₱0</span></p>
+          <p>Withdrawals: <span id="broWithdrawals">₱0</span></p>
+          <p>Current Balance: <span id="broBalance">₱0</span></p>
+        </div>
       </div>
     </section>
 
     <section id="data" class="panel">
-      <div class="section-head">
-        <h2>Data Management</h2>
-      </div>
+      <div class="section-head"><h2>Data Management</h2></div>
       <div class="card form-card data-card">
         <div class="data-actions">
-          <button id="backupBtn" class="primary large-btn">Backup Data</button>
-          <label class="secondary large-btn file-label">Import Data
+          <button id="backupBtn" class="primary large-btn">Export Backup</button>
+          <label class="secondary large-btn file-label">Import Backup
             <input type="file" id="importInput" accept="application/json" hidden>
           </label>
         </div>
-        <p class="muted">Backup includes tenants, rent records, utilities, and cashflow entries. Import will overwrite existing data.</p>
+        <p class="muted">Backup includes tenants, payments, expenses, ledger, utilities, settings. Import preserves compatibility with older files.</p>
       </div>
     </section>
-
   </main>
 
-  <div id="modal" class="modal hidden">
+  <div id="tenantModal" class="modal hidden">
     <div class="modal-content">
       <div class="modal-head">
-        <h3 id="modalTitle">Add Tenant</h3>
-        <button id="closeModal">✕</button>
+        <h3 id="tenantModalTitle">Add Tenant</h3>
+        <button class="close" data-close="tenantModal">✕</button>
       </div>
       <form id="tenantForm" class="form-grid">
         <input type="hidden" name="id">
         <label>Name<input name="name" required></label>
         <label>Unit<select name="unit" required></select></label>
-        <label>Bed<select name="bed" required></select></label>
-        <label>Move-in<input type="date" name="moveIn" required></label>
-        <label>Monthly Rent (₱)<input type="number" name="rent" value="3000" min="0" step="0.01" required></label>
-        <label>Status<select name="status"><option value="active">Active</option><option value="moved-out">Moved out</option></select></label>
+        <label>Bed<select name="bedSpace" required></select></label>
+        <label>Move-in<input type="date" name="moveInDate" required></label>
+        <label>Move-out<input type="date" name="moveOutDate"></label>
+        <label>Rent (₱)<input type="number" name="rentAmount" min="0" step="0.01" value="3000"></label>
+        <label>Status<select name="status"><option value="active">Active</option><option value="moved-out">Moved Out</option></select></label>
         <div class="actions">
-          <button type="submit" class="primary large-btn">Save</button>
+          <button class="secondary" type="button" id="clearHistoryBtn">Clear Payment History</button>
+          <button class="primary" type="submit">Save</button>
         </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="paymentModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-head">
+        <h3>Record Payment</h3>
+        <button class="close" data-close="paymentModal">✕</button>
+      </div>
+      <form id="paymentForm" class="form-grid">
+        <label>Tenant<select name="tenantId" required></select></label>
+        <label>Amount (₱)<input type="number" name="amount" min="0" step="0.01" required></label>
+        <label>Payment Date<input type="date" name="paymentDate" required></label>
+        <label>Collected By<select name="collectedBy"><option value="">—</option><option>Brother</option><option>Angel</option></select></label>
+        <label>Payment Method<select name="method"><option value="">—</option><option>Cash</option><option>Bank Transfer</option><option>GCash</option><option>Other</option></select></label>
+        <label>Notes<input name="notes"></label>
+        <div class="actions"><button class="primary" type="submit">Save Payment</button></div>
       </form>
     </div>
   </div>
